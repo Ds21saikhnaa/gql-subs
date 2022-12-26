@@ -1,5 +1,15 @@
 import { ApolloServer } from '@apollo/server';
-import { startStandaloneServer } from '@apollo/server/standalone';
+import { expressMiddleware } from "@apollo/server/express4";
+import { ApolloServerPluginDrainHttpServer } from "@apollo/server/plugin/drainHttpServer";
+import express from 'express';
+import { createServer } from "http";
+import { makeExecutableSchema } from "@graphql-tools/schema";
+import { WebSocketServer } from 'ws';
+import { useServer } from "graphql-ws/lib/use/ws";
+import { PubSub } from 'graphql-subscriptions';
+import bodyParser from "body-parser";
+import cors from "cors";
+const pubsub = new PubSub();
 let data = [
     {
         id: "1",
@@ -30,15 +40,25 @@ const typeDefs = `#graphql
 
     type Query {
       user(ID: ID!): User!
-      users(ID: ID!): [User]!
+      users(ID: ID!): Int!
     }
 
     type Mutation {
       createUser(userInput: UserInput): User!
       editUser(ID: ID!, userInput: UserInput): Boolean
     }
+
+    type Subscription {
+      change: Int
+    }
 `;
+let currentNumber = 0;
 const resolvers = {
+    Subscription: {
+        change: {
+            subscribe: () => pubsub.asyncIterator(["CHANGE"])
+        }
+    },
     Query: {
         async user(_, { ID }) {
             for (let i = 0; i < data.length; i++)
@@ -46,8 +66,8 @@ const resolvers = {
                     return data[i];
             return "bhgi";
         },
-        async users(_, args, context) {
-            return data;
+        async users(_, args, { pubsub }) {
+            return currentNumber;
         }
     },
     Mutation: {
@@ -69,11 +89,44 @@ const resolvers = {
         }
     }
 };
+const schema = makeExecutableSchema({ typeDefs, resolvers });
+const app = express();
+const httpServer = createServer(app);
+const wsServer = new WebSocketServer({
+    server: httpServer,
+    path: "/graphql",
+});
+const serverCleanup = useServer({ schema }, wsServer);
 const server = new ApolloServer({
-    typeDefs,
-    resolvers,
+    schema,
+    plugins: [
+        // Proper shutdown for the HTTP server.
+        ApolloServerPluginDrainHttpServer({ httpServer }),
+        // Proper shutdown for the WebSocket server.
+        {
+            async serverWillStart() {
+                return {
+                    async drainServer() {
+                        await serverCleanup.dispose();
+                    },
+                };
+            },
+        },
+    ],
 });
-const { url } = await startStandaloneServer(server, {
-    listen: { port: 3000 },
+await server.start();
+app.use("/graphql", cors(), bodyParser.json(), expressMiddleware(server));
+httpServer.listen(3000, () => {
+    console.log(`🚀 Query endpoint ready at http://localhost:${3000}/graphql`);
+    console.log(`🚀 Subscription endpoint ready at ws://localhost:${3000}/graphql`);
 });
-console.log(`🚀 Server ready at ${url}`);
+function incrementNumber() {
+    currentNumber += 1;
+    pubsub.publish("CHANGE", { change: currentNumber });
+    setTimeout(incrementNumber, 1000);
+}
+incrementNumber();
+// const { url } = await startStandaloneServer(server , {
+//   listen: { port: 3000 },
+// });
+// console.log(`🚀 Server ready at ${url}`);
