@@ -36,6 +36,7 @@ let data: user[] = [
   }
 ]
 
+const onUsersUpdates = (fn: user) => data.push(fn);
 const typeDefs = `#graphql
     type User {
       name: String
@@ -49,16 +50,17 @@ const typeDefs = `#graphql
 
     type Query {
       user(ID: ID!): User!
-      users(ID: ID!): Int!
+      users(ID: ID): [User!]
     }
 
     type Mutation {
-      createUser(userInput: UserInput): User!
+      createUser(userInput: UserInput): [User!]
       editUser(ID: ID!, userInput: UserInput): Boolean
     }
 
     type Subscription {
       change: Int
+      realTime: [User!]
     }
 `;
 
@@ -69,6 +71,11 @@ const resolvers = {
   Subscription: {
     change: {
       subscribe: () => pubsub.asyncIterator(["CHANGE"])
+    },
+    realTime: {
+      subscribe: () => {
+        return pubsub.asyncIterator("REAL_TIME")
+      }
     }
   },
   Query: {
@@ -76,14 +83,15 @@ const resolvers = {
       for (let i = 0; i < data.length; i++) if(data[i].id == ID) return data[i];
       return "bhgi"
     },
-    async users(_: any, args: any, { pubsub }: any) {
-      return currentNumber
+    async users(_: any, args: any) {
+      return data
     }
   },
   Mutation: {
     async createUser(_: any, { userInput }: any) {
       console.log(userInput);
       data.push(userInput);
+      pubsub.publish("REAL_TIME", {realTime: data})
       return data;
     },
     async editUser(_: any, { ID, userInput }: any) {
@@ -151,9 +159,4 @@ function incrementNumber() {
   pubsub.publish("CHANGE", { change: currentNumber });
   setTimeout(incrementNumber, 1000);
 }
-incrementNumber(); 
-// const { url } = await startStandaloneServer(server , {
-//   listen: { port: 3000 },
-// });
-
-// console.log(`🚀 Server ready at ${url}`);
+incrementNumber();

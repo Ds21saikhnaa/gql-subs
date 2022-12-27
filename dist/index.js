@@ -27,6 +27,7 @@ let data = [
         age: 21
     }
 ];
+const onUsersUpdates = (fn) => data.push(fn);
 const typeDefs = `#graphql
     type User {
       name: String
@@ -40,16 +41,17 @@ const typeDefs = `#graphql
 
     type Query {
       user(ID: ID!): User!
-      users(ID: ID!): Int!
+      users(ID: ID): [User!]
     }
 
     type Mutation {
-      createUser(userInput: UserInput): User!
+      createUser(userInput: UserInput): [User!]
       editUser(ID: ID!, userInput: UserInput): Boolean
     }
 
     type Subscription {
       change: Int
+      realTime: [User!]
     }
 `;
 let currentNumber = 0;
@@ -57,6 +59,11 @@ const resolvers = {
     Subscription: {
         change: {
             subscribe: () => pubsub.asyncIterator(["CHANGE"])
+        },
+        realTime: {
+            subscribe: () => {
+                return pubsub.asyncIterator("REAL_TIME");
+            }
         }
     },
     Query: {
@@ -66,14 +73,15 @@ const resolvers = {
                     return data[i];
             return "bhgi";
         },
-        async users(_, args, { pubsub }) {
-            return currentNumber;
+        async users(_, args) {
+            return data;
         }
     },
     Mutation: {
         async createUser(_, { userInput }) {
             console.log(userInput);
             data.push(userInput);
+            pubsub.publish("REAL_TIME", { realTime: data });
             return data;
         },
         async editUser(_, { ID, userInput }) {
@@ -126,7 +134,3 @@ function incrementNumber() {
     setTimeout(incrementNumber, 1000);
 }
 incrementNumber();
-// const { url } = await startStandaloneServer(server , {
-//   listen: { port: 3000 },
-// });
-// console.log(`🚀 Server ready at ${url}`);
